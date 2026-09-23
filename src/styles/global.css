@@ -1,0 +1,207 @@
+/* ============================================================
+   全局样式 —— 由小程序 app.wxss + 各页 wxss 汇总迁移
+   换算基准：750rpx = 100vw  →  1rpx = 100/750 vw = 0.13333vw
+
+   为此我写了一个近似换算：设计稿 620rpx 宽 = 82.67vw。
+   为便于阅读，页面样式中统一使用 vw 直接书写。
+   ============================================================ */
+
+:root {
+  /* 主题色（与小程序一致） */
+  --ink-green: #2D5016;
+  --indigo: #1A3A4A;
+  --gold: #C9A84C;
+  --gold-deep: #b8860b;
+  --paper: #F5F0E8;
+  --paper-card: #fffdf8;
+  --warm: #8a6a1e;
+  --line: #e2d9c6;
+  --muted: #8c8271;
+  --danger: #b23b3b;
+
+  /* 安全区（iOS 刘海屏） */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  /* 顶部导航高度 */
+  --nav-h: 44px;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--paper);
+  color: #2b2b2b;
+  font-family: "Songti SC", "SimSun", "Noto Serif SC", "Source Han Serif SC", serif;
+  font-size: 14px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+#app {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+button {
+  font-family: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+input, textarea {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+/* 去掉数字输入框的上下箭头 */
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* ---------- 通用布局 ---------- */
+.page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--paper);
+  padding-bottom: calc(30px + var(--safe-bottom));
+}
+
+/* 页面左右留白：小程序为 32rpx ≈ 4.27vw */
+.pad {
+  padding-left: 4.27vw;
+  padding-right: 4.27vw;
+}
+
+/* ---------- 顶部导航（模拟小程序导航栏） ---------- */
+.navbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  height: calc(var(--nav-h) + var(--safe-top));
+  padding-top: var(--safe-top);
+  background: var(--ink-green);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  letter-spacing: 1px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, .12);
+}
+
+.navbar-back {
+  position: absolute;
+  left: 12px;
+  top: var(--safe-top);
+  height: var(--nav-h);
+  width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+}
+
+/* ---------- 按钮 ---------- */
+.btn-primary {
+  background: var(--ink-green);
+  color: #fff;
+  text-align: center;
+  border-radius: 1.6vw;
+  padding: 3.2vw 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  transition: opacity .15s;
+}
+
+.btn-primary:active {
+  opacity: .85;
+}
+
+.btn-primary[disabled],
+.btn-primary.disabled {
+  background: #b9b3a4;
+  opacity: 1;
+}
+
+.btn-ghost {
+  background: transparent;
+  border: 0.27vw solid var(--ink-green);
+  color: var(--ink-green);
+  text-align: center;
+  border-radius: 1.6vw;
+  padding: 3.2vw 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.btn-ghost:active {
+  background: rgba(45, 80, 22, .06);
+}
+
+/* ---------- 卡片 ---------- */
+.card {
+  background: var(--paper-card);
+  border-radius: 1.6vw;
+  box-shadow: 0 0.27vw 1.6vw rgba(45, 80, 22, .06);
+}
+
+/* ---------- 文本工具类 ---------- */
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.center { text-align: center; }
+
+.watermark {
+  text-align: center;
+  color: #a8987a;
+  font-size: 13px;
+  letter-spacing: 2px;
+  margin-top: 8vw;
+}
+
+/* ---------- 滚动容器（替代 scroll-view） ---------- */
+.scroll-x {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.scroll-x::-webkit-scrollbar { height: 0; }
+.scroll-y::-webkit-scrollbar { width: 0; }
+
+.no-wrap { white-space: nowrap; }
+
+/* ---------- 页面切换过渡 ---------- */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity .18s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* ---------- 弹层遮罩 ---------- */
+.mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .45);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
