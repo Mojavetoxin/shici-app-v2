@@ -59,16 +59,17 @@
          因此不再依赖 preventDefault，也就不需要 passive。 -->
     <div class="g-main">
       <div class="g-board-wrap" @touchstart="onTouchStart" @touchend="onTouchEnd" @touchcancel="onTouchCancel">
-        <div class="g-board" :class="[isRush ? 'st' + rushStage : '', rushed ? 'victory' : '']">
+        <div class="g-board" ref="boardEl" :class="[isRush ? 'st' + rushStage : '', rushed ? 'victory' : '']">
           <div v-for="cell in flatBoard" :key="cell.key" class="g-slot">
             <div
               class="g-cell"
-              :class="[cell.xtra ? 'xtra' : '', cell.big ? 'big' : '', cell.mid ? 'mid' : '', cell.win1m ? 'win1m' : '', cell.anim]"
+              :class="[cell.fit, cell.win1m ? 'win1m' : '', cell.anim]"
               :style="{
                 background: cell.bg,
                 color: cell.fg,
                 borderColor: cell.rim,
-                borderWidth: cell.rimW
+                borderWidth: cell.rimW,
+                fontSize: tileFs[cell.value] ? `min(var(--fit), ${tileFs[cell.value]})` : ''
               }">{{ cell.value }}</div>
           </div>
         </div>
@@ -127,10 +128,11 @@
 // 与小程序版的唯一差异：H5 可以监听物理键盘，因此新增方向键支持
 //   ← ↑ → ↓ / WASD  →  对应移动（WASD 为桌面端顺手补充）
 //   其余行为（双模式分布、封顶合并、撤回栈、自动存档、脏数据校验）完全一致。
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue';
 import { useRouter } from 'vue-router';
 import { toast } from '../utils/ui.js';
 import { g2048 } from '../utils/store.js';
+import { fitClassOf, formatTile, tileFontPx } from '../utils/tileText.js';
 import {
   MAX_STAGE,
   RUSH_ASCEND_AT,
@@ -218,27 +220,11 @@ function formatCap(val) {
   return String(val);
 }
 
-// 数字显示格式（两级策略）：
-//   1) ≤ 65536：千分位分组，如 65,536（4 位以内不分组，如 1024）
-//   2) > 65536：缩写为 K / M / B 整数，如 131K、67M、2B
-function formatTile(val) {
-  if (!val) return '';
-  if (val > 65536) {
-    const units = [[1e9, 'B'], [1e6, 'M'], [1e3, 'K']];
-    for (let i = 0; i < units.length; i++) {
-      const base = units[i][0];
-      if (val >= base) return Math.round(val / base) + units[i][1];
-    }
-  }
-  const s = String(val);
-  if (s.length <= 4) return s;
-  let out = '';
-  for (let i = 0; i < s.length; i++) {
-    if (i > 0 && (s.length - i) % 3 === 0) out += ',';
-    out += s[i];
-  }
-  return out;
-}
+// 数字显示格式与字号分档都在 utils/tileText.js（纯函数，有单测）：
+//   formatTile —— 千分位 / K·M·B 缩写
+//   fitClassOf —— 按**显示字符数**给出字号档位（fit3 ~ fit7）
+// 历史上这里是按数值大小分档的，把 4 字的 "8192" 和 6 字的 "16,384"
+// 划进同一档，导致后者撑爆方块并盖到邻格 —— 详见 tileText.js 顶部说明。
 
 // 按权重抽取数字（纯函数）
 function pickWeighted(pool) {
@@ -346,6 +332,54 @@ function addRandom() {
   return pos;
 }
 
+/* ---------------- 方块字号自适应（防遮挡保险） ----------------
+   分档字号（--fit）已经按字符数给对了基准值，但「1em 到底有多宽」取决于
+   设备上真正命中哪个字体（安卓上没有 Songti SC / SimSun，会回落到系统衬线，
+   字宽与桌面可能差 10%~20%）。所以再加一层实测保险：
+     · 用 canvas 按同一个 font-family 量出这段文字「1px 字号下的宽度」；
+     · 按方块实测内宽反推最大可用字号，写成 `min(档位字号, 实测字号)`；
+   这样无论什么字体/什么屏宽，数字都不会再顶出方块。只会往小收，不会放大。 */
+
+const boardEl = ref(null);       // .g-board 的模板引用，用来读方块实际内宽
+const tileFs = ref({});          // 文本 → '20.4px'，模板里与档位字号取 min
+const emWidthCache = new Map();  // 文本 → 每 1px 字号占多少 px 宽
+let measureCtx = null;           // null=尚未创建 / false=本环境不支持 canvas
+let fitPending = false;
+// 必须与 .g-cell 的 font-family / font-weight 完全一致，否则量出来的宽度不作数
+const MEASURE_FONT = '700 100px "Songti SC", "SimSun", serif';
+
+function emWidthOf(text) {
+  if (emWidthCache.has(text)) return emWidthCache.get(text);
+  if (measureCtx === null) measureCtx = document.createElement('canvas').getContext('2d') || false;
+  if (!measureCtx) return 0;   // 拿不到 2D 上下文（极端环境）→ 退回纯 CSS 档位字号
+  measureCtx.font = MEASURE_FONT;
+  const w = measureCtx.measureText(text).width / 100;
+  emWidthCache.set(text, w);
+  return w;
+}
+
+function autoFitFonts() {
+  fitPending = false;
+  const sample = boardEl.value && boardEl.value.querySelector('.g-slot');
+  const boxWidth = sample ? sample.clientWidth : 0;
+  if (!boxWidth) return;                 // 还没布局出来，等下一次 render 再算
+  const next = {};
+  for (const cell of flatBoard.value) {
+    const t = cell.value;
+    if (!t || next[t]) continue;
+    const px = tileFontPx(boxWidth, emWidthOf(t));
+    if (px > 0) next[t] = Math.round(px * 10) / 10 + 'px';
+  }
+  tileFs.value = next;
+}
+
+// 合并多次触发：一帧内只量一次（render 每次移动都会调用）
+function scheduleAutoFit() {
+  if (fitPending) return;
+  fitPending = true;
+  nextTick(autoFitFonts);
+}
+
 /* ---------------- 渲染 ---------------- */
 
 // 统一渲染：所有状态由参数显式传入（避免依赖异步更新的旧值）
@@ -366,16 +400,16 @@ function render(opts = {}) {
       let anim = '';
       if (idx === spawnKey) anim = 'pop-' + tag;
       else if (mergeMask[idx]) anim = 'merge-' + tag;
+      const text = formatTile(val);
       flat.push({
         key: r + '-' + c,
-        value: formatTile(val),
+        value: text,
         bg: st.bg,
         fg: st.fg,
         rim: st.rim || 'transparent',
         rimW: st.w ? st.w + 'px' : '0px',
-        xtra: val > 1000000,
-        big: val > 65536 && val <= 1000000,
-        mid: val >= 1024 && val <= 65536,
+        // 字号档位按「显示字符数」定（fit3 ~ fit7），不再按数值大小分档
+        fit: fitClassOf(text),
         // 通关方块（1048576）单独做彩色流动边框
         win1m: val >= 1048576,
         anim
@@ -392,6 +426,8 @@ function render(opts = {}) {
   rushStage.value = stageFromMax(maxOnBoard());
   rushed.value = isRushed();
   modeDesc.value = currentDesc();
+  // 棋盘尺寸/字号可能已变（首屏、转屏、桌面端窗口缩放），重新量一次
+  scheduleAutoFit();
 }
 
 /* ---------------- 存档 ---------------- */
@@ -773,6 +809,11 @@ onMounted(() => {
   history = [];
   touchActive = false;
 
+  // 方块字号实测保险：字号要跟着「方块真实内宽」走，
+  // 因此字体加载完成、窗口尺寸变化（含手机转屏、桌面拉窗口）都要重新量一次。
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(scheduleAutoFit);
+  window.addEventListener('resize', scheduleAutoFit);
+
   // 优先尝试恢复存档；失败则按「上次使用的模式」开新局
   const save = loadSave();
   if (save) {
@@ -807,6 +848,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown);
   window.removeEventListener('pagehide', saveGame);
+  window.removeEventListener('resize', scheduleAutoFit);
   saveGame();   // 离开页面（返回首页 / 切换路由）时存档
 });
 </script>
@@ -1127,18 +1169,31 @@ onBeforeUnmount(() => {
   border-width: 0;
   border-color: transparent;
   font-weight: 700;
-  font-size: 8vw;
+  /* --fit 是「基准口径」的字号档位（见下方 .fit3~.fit7）；
+     实际生效值 = min(档位字号, 实测可用字号)，后者由 JS 按方块真实内宽算出，
+     用于兜住不同字体的字宽差异（安卓没有 Songti/SimSun，会回落到系统衬线）。 */
+  --fit: 8vw;
+  font-size: var(--fit);
   font-family: "Songti SC", "SimSun", serif;
   line-height: 1;
   box-sizing: border-box;
   transition: background 0.16s ease, color 0.16s ease;
 }
-/* 4 位数字（1,024 ~ 8,192）：略收 */
-.g-cell.mid { font-size: 6.93vw; }
-/* 5~6 位数字（如 16,384 / 65,536） */
-.g-cell.big { font-size: 4.8vw; letter-spacing: -0.07vw; }
-/* 7 位以上（如 K/M/B 缩写） */
-.g-cell.xtra { font-size: 3.07vw; letter-spacing: -0.13vw; }
+/* 字号按**显示字符数**分档，与 utils/tileText.js 的 fitClassOf 一一对应。
+   方块内宽约 18vw，按「数字 0.58em / 逗号 0.22em / 字母 0.72em」估算并留余量：
+     3 字内（2 / 128 / 2B）        最宽 ≈ 1.7em → 8vw   ≈ 13.6vw
+     4 字  （1024 / 8192 / 512K）  最宽 ≈ 2.5em → 6.2vw ≈ 15.5vw
+     5 字  （预留）                最宽 ≈ 3.0em → 5.6vw ≈ 16.8vw
+     6 字  （16,384 / 65,536）     最宽 ≈ 3.2em → 5vw   ≈ 16.0vw
+     7 字+（预留）                              → 4.4vw
+   修复前的写法是「1024 ~ 65536 一律 6.93vw」，把 4 字的 8192 和 6 字的
+   16,384 放进同一档：6.93vw × 3.1em ≈ 21.5vw > 18vw，于是 16,384 / 32,768 /
+   65,536 顶出方块、盖到右边邻格上。 */
+.g-cell.fit3 { --fit: 8vw; }
+.g-cell.fit4 { --fit: 6.2vw; }
+.g-cell.fit5 { --fit: 5.6vw; }
+.g-cell.fit6 { --fit: 5vw; }
+.g-cell.fit7 { --fit: 4.4vw; }
 
 /* ---- 动画 ---- */
 .g-cell.pop-a, .g-cell.pop-b { animation: gPop 0.2s cubic-bezier(0.22, 1.2, 0.36, 1); }
@@ -1322,10 +1377,14 @@ onBeforeUnmount(() => {
   .g-act { font-size: 14px; padding: 7px 22px; }
 
   .g-board { gap: 10px; padding: 10px; border-radius: 10px; }
-  .g-cell { font-size: 40px; border-radius: 7px; }
-  .g-cell.mid { font-size: 34px; }
-  .g-cell.big { font-size: 23px; }
-  .g-cell.xtra { font-size: 15px; }
+  /* 桌面端棋盘宽度 = min(420px, 100vh - 420px, ...)，方块内宽约 73~92px，
+     故改成定值 px；比手机端更小的场景由 JS 实测兜底再收一档。 */
+  .g-cell { --fit: 40px; border-radius: 7px; }
+  .g-cell.fit3 { --fit: 40px; }
+  .g-cell.fit4 { --fit: 33px; }
+  .g-cell.fit5 { --fit: 29px; }
+  .g-cell.fit6 { --fit: 25px; }
+  .g-cell.fit7 { --fit: 20px; }
   .g-over-text { font-size: 26px; letter-spacing: 5px; }
   .g-over-sub { font-size: 15px; }
   .g-over-btns { gap: 11px; margin-top: 20px; }

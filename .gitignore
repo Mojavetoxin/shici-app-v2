@@ -1,0 +1,7 @@
+# 依赖（dist/ 是随版本一起提交的静态产物，故意不忽略）
+node_modules/
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+*.log
